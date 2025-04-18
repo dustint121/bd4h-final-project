@@ -2,3 +2,5 @@
 /original files
 /__pycache__
 /.venv
+/classes/Minimal3DCNN_class
+test_basic_3D_CNN.py
