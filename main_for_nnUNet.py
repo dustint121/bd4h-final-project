@@ -3,33 +3,9 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader
-from classes.nnUNet_class import nnUNet3D, MedicalVolumeDataset_3D
-
-# --- Hybrid Loss (CrossEntropy + Dice) ---
-def dice_score_3d_perclass(pred, target, num_classes=3):
-    """Returns list of Dice scores, one per class."""
-    smooth = 1e-6
-    pred = pred.argmax(1)  # (B, D, H, W)
-    scores = []
-    for class_idx in range(num_classes):
-        pred_mask = (pred == class_idx).float()
-        target_mask = (target == class_idx).float()
-        intersection = (pred_mask * target_mask).sum()
-        union = pred_mask.sum() + target_mask.sum()
-        dice = (2. * intersection + smooth) / (union + smooth)
-        scores.append(dice.item())
-    return scores
-
-def hybrid_loss(pred, target):
-    ce = F.cross_entropy(pred, target)
-    pred_prob = F.softmax(pred, dim=1)
-    # Use mean Dice across classes for loss
-    dice_scores = dice_score_3d_perclass(pred, target, num_classes=pred.shape[1])
-    dice_loss = 1 - sum(dice_scores) / len(dice_scores)
-    return ce + dice_loss
-
-
-
+from classes.nnUNet_class import nnUNet3D
+from classes.VolumeDataset_3D import MedicalVolumeDataset_3D
+from utils_3D_models import hybrid_loss, dice_score_3d, dice_score_3d_perclass
 
 
 # --- Training and Validation Loop ---

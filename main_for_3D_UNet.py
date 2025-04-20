@@ -3,29 +3,9 @@ import torch
 import torch.nn.functional as F
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
-from classes.UNet3D_class import UNet3D, MedicalVolumeDataset_3D
-from tqdm import tqdm
-
-
-# Hybrid Loss (CE + Dice)
-def hybrid_loss(pred, target):
-    ce = F.cross_entropy(pred, target)
-    pred_prob = F.softmax(pred, dim=1)
-    dice = 1 - dice_score_3d(pred_prob, target)
-    return ce + dice
-
-# 3D Dice Calculation
-def dice_score_3d(pred, target):
-    smooth = 1e-6
-    pred = pred.argmax(1)
-    scores = []
-    for class_idx in range(3):
-        pred_mask = (pred == class_idx).float()
-        target_mask = (target == class_idx).float()
-        intersection = (pred_mask * target_mask).sum()
-        union = pred_mask.sum() + target_mask.sum()
-        scores.append((2.*intersection + smooth)/(union + smooth))
-    return torch.mean(torch.tensor(scores))
+from classes.UNet3D_class import UNet3D
+from classes.VolumeDataset_3D import VolumeDataset_3D
+from utils_3D_models import hybrid_loss, dice_score_3d
 
 
 
@@ -36,7 +16,7 @@ train_volumes, test_volumes = train_test_split(volume_indices, test_size=0.2, ra
 
 
 # Data Loaders
-train_dataset = MedicalVolumeDataset_3D("data/LITS17", train_volumes)
+train_dataset = VolumeDataset_3D(dataset_path="data/LITS17", file_indices=train_volumes, depth_fraction=0.1)
 # train_loader = DataLoader(
 #     train_dataset,
 #     batch_size=2,  # Matches paper's LiTS batch size
@@ -50,7 +30,7 @@ train_loader = DataLoader(
     shuffle=True
 )
 
-test_dataset = MedicalVolumeDataset_3D("data/LITS17", test_volumes)
+test_dataset = VolumeDataset_3D(dataset_path="data/LITS17", file_indices=test_volumes, depth_fraction=0.1)
 # test_loader = DataLoader(
 #     test_dataset,
 #     batch_size=2,  # Matches paper's LiTS batch size

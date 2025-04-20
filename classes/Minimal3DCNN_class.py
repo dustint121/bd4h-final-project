@@ -24,6 +24,8 @@ class MedicalVolumeDataset_3D(Dataset):
             
             # Z-score normalization (paper Section 4.1)
             volume = self._normalize(volume, seg)
+            volume = volume.astype(np.float32)
+            # print(volume.dtype, volume.max(), volume.min())
             
             self.volumes.append(volume[None, ...])  # Add channel dim
             self.segmentations.append(seg)

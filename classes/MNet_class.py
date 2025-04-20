@@ -4,106 +4,161 @@ from torch.utils.data import Dataset
 import numpy as np
 import torch.nn.functional as F
 
-class MedicalVolumeDataset_3D(Dataset):
-    def __init__(self, dataset_path, file_indices):
-        self.volumes = []
-        self.segmentations = []
-        for i in file_indices:
-            data = np.load(f"{dataset_path}/{i}.npz")
-            volume = np.transpose(data["volume"], (2, 0, 1)).astype(np.int32)
-            seg = np.transpose(data["segmentation"], (2, 0, 1))
-            self.volumes.append(volume[None, ...])  # Add channel dim
-            self.segmentations.append(seg)
-
-    def __len__(self):
-        return len(self.volumes)
-
-    def __getitem__(self, idx):
-        volume = torch.FloatTensor(self.volumes[idx])
-        seg = torch.LongTensor(self.segmentations[idx])
-        d, h, w = volume.shape[1:]
-        pad_d = (8 - (d % 8)) % 8
-        pad_h = (8 - (h % 8)) % 8
-        pad_w = (8 - (w % 8)) % 8
-        volume_padded = F.pad(volume, (0, pad_w, 0, pad_h, 0, pad_d, 0, 0))
-        seg_padded = F.pad(seg, (0, pad_w, 0, pad_h, 0, pad_d))
-        return volume_padded, seg_padded
-
-
-
-
-
 class MeshBlock(nn.Module):
-    """
-    MNet basic block: parallel 2D and 3D convolutions, then feature fusion.
-    """
-    def __init__(self, in_channels, out_channels):
+    """Paper-accurate block with absolute subtraction fusion"""
+    def __init__(self, in_channels, out_channels, module_type='both'):
         super().__init__()
-        # 3D conv branch
+        self.module_type = module_type
+        
+        # 3D branch
         self.conv3d = nn.Sequential(
-            nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.Conv3d(in_channels, out_channels, 3, padding=1),
             nn.InstanceNorm3d(out_channels),
             nn.LeakyReLU(inplace=True),
-            nn.Conv3d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.Conv3d(out_channels, out_channels, 3, padding=1),
             nn.InstanceNorm3d(out_channels),
             nn.LeakyReLU(inplace=True)
-        )
-        # 2D conv branch (applied slice-wise along depth)
+        ) if module_type in ['3d', 'both'] else None
+        
+        # 2D branch
         self.conv2d = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels, out_channels, 3, padding=1),
             nn.InstanceNorm2d(out_channels),
             nn.LeakyReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.Conv2d(out_channels, out_channels, 3, padding=1),
             nn.InstanceNorm2d(out_channels),
             nn.LeakyReLU(inplace=True)
-        )
-        # Fusion
-        self.fuse = nn.Conv3d(out_channels * 2, out_channels, kernel_size=1)
+        ) if module_type in ['2d', 'both'] else None
+        
+        # Paper's feature merging unit (FMU)
+        self.fmu = nn.Sequential(
+            nn.Conv3d(out_channels*2, out_channels, 1),
+            nn.InstanceNorm3d(out_channels),
+            nn.LeakyReLU(inplace=True)
+        ) if module_type == 'both' else None
 
     def forward(self, x):
-        # x: (B, C, D, H, W)
-        b, c, d, h, w = x.shape
-        out3d = self.conv3d(x)
-        # Apply 2D conv to each slice along D
-        x2d = x.permute(0, 2, 1, 3, 4).reshape(b * d, c, h, w)
-        out2d = self.conv2d(x2d)
-        out2d = out2d.reshape(b, d, -1, h, w).permute(0, 2, 1, 3, 4)
-        # Concatenate along channel
-        out = torch.cat([out3d, out2d], dim=1)
-        out = self.fuse(out)
-        return out
-    
+        if self.module_type == 'both':
+            out3d = self.conv3d(x)
+            
+            # Process 2D slices
+            b, c, d, h, w = x.shape
+            x2d = x.permute(0, 2, 1, 3, 4).reshape(b*d, c, h, w)
+            out2d = self.conv2d(x2d)
+            out2d = out2d.reshape(b, d, -1, h, w).permute(0, 2, 1, 3, 4)
+            
+            # Paper's fusion: abs(subtraction)
+            merged = torch.abs(out3d - out2d)
+            return self.fmu(torch.cat([out3d, merged], dim=1))
+            
+        elif self.module_type == '3d':
+            return self.conv3d(x)
+        else:  # 2D module
+            return x  # 2D processing handled at network level
+
+class FMU(nn.Module):
+    """Feature Merging Unit from paper"""
+    def __init__(self, in_ch):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv3d(in_ch*2, in_ch, 1),
+            nn.InstanceNorm3d(in_ch),
+            nn.LeakyReLU()
+        )
+        
+    def forward(self, x2d, x3d):
+        # Paper-compliant fix (Eq.2)
+        merged = torch.abs(x3d - x2d)  # Note x3d first
+        return self.conv(torch.cat([x3d, merged], dim=1))
+
+
+
+
 
 
 class MNet3D(nn.Module):
     def __init__(self, n_channels=1, n_classes=3):
         super().__init__()
-        # Encoder
-        self.enc1 = MeshBlock(n_channels, 32)
-        self.down1 = nn.Sequential(nn.MaxPool3d(2), MeshBlock(32, 64))
-        self.down2 = nn.Sequential(nn.MaxPool3d(2), MeshBlock(64, 128))
-        self.down3 = nn.Sequential(nn.MaxPool3d(2), MeshBlock(128, 256))
-        # Decoder
-        self.up1 = nn.ConvTranspose3d(256, 128, kernel_size=2, stride=2)
-        self.dec1 = MeshBlock(256, 128)
-        self.up2 = nn.ConvTranspose3d(128, 64, kernel_size=2, stride=2)
-        self.dec2 = MeshBlock(128, 64)
-        self.up3 = nn.ConvTranspose3d(64, 32, kernel_size=2, stride=2)
-        self.dec3 = MeshBlock(64, 32)
-        self.outc = nn.Conv3d(32, n_classes, kernel_size=1)
+        self.grid_size = 5  # 5x5 mesh from paper
+        self.depths = [1,2,3,4,5]
+        
+        # Create 5x5 mesh grid
+        self.modules_grid = nn.ModuleList()
+        for row in range(self.grid_size):
+            row_modules = nn.ModuleList()
+            for col in range(self.grid_size):
+                # Determine module type per paper Figure 2a
+                if col == 0:  # First column: 3D only
+                    module_type = '3d'
+                elif row == 0:  # First row: 2D only
+                    module_type = '2d'
+                else:  # Both branches
+                    module_type = 'both'
+                
+                # Filter growth formula from paper Eq(1)
+                current_depth = max(row+1, col+1)  # Convert 0-based indices to depth
+                in_ch = 32 + 16*(current_depth-1)
+                out_ch = 32 + 16*current_depth
+                
+                row_modules.append(MeshBlock(in_ch, out_ch, module_type))
+            self.modules_grid.append(row_modules)
+        
+        # Deep supervision outputs (6 branches)
+        # self.output_branches = nn.ModuleList([
+        #     nn.Conv3d(32 + 16*(i-1), n_classes, 1) for i in self.depths + [5]
+        # ])
+        # Paper-compliant fix (depth=5 channels)
+        final_channels = 32 + 16*5 = 112
+        self.output_branches = nn.ModuleList([
+            ...,
+            nn.Conv3d(112, n_classes, 1)  # Final output
+        ])
+        
+        # Skip connections with FMU
+        self.fmus = nn.ModuleList([
+            FMU(32 + 16*(i-1)) for i in self.depths
+        ])
 
     def forward(self, x):
-        x1 = self.enc1(x)
-        x2 = self.down1(x1)
-        x3 = self.down2(x2)
-        x4 = self.down3(x3)
-        x = self.up1(x4)
-        x = torch.cat([x, x3], dim=1)
-        x = self.dec1(x)
-        x = self.up2(x)
-        x = torch.cat([x, x2], dim=1)
-        x = self.dec2(x)
-        x = self.up3(x)
-        x = torch.cat([x, x1], dim=1)
-        x = self.dec3(x)
-        return self.outc(x)
+        features = [[None]*self.grid_size for _ in range(self.grid_size)]
+        outputs = []
+        
+        # Initialize first module (depth=1)
+        features[0][0] = self.modules_grid[0][0](x)
+        
+        # Build mesh connections
+        for row in range(self.grid_size):
+            for col in range(self.grid_size):
+                if row == 0 and col == 0:
+                    continue
+                
+                current_depth = max(row+1, col+1)  # Paper's depth definition
+                inputs = []
+                
+                # Get left feature (same row, previous column)
+                if col > 0:
+                    left = features[row][col-1]
+                    inputs.append(left)
+                    
+                # Get top feature (previous row, same column)
+                if row > 0:
+                    top = features[row-1][col]
+                    inputs.append(top)
+                
+                # Fuse features using depth-appropriate FMU
+                if len(inputs) == 2:
+                    fmu_idx = current_depth - 1  # Correct FMU indexing
+                    merged = self.fmus[fmu_idx](inputs[0], inputs[1])
+                elif len(inputs) == 1:
+                    merged = inputs[0]
+                
+                # Process through current module
+                features[row][col] = self.modules_grid[row][col](merged)
+                
+                # Add deep supervision outputs at network edges
+                if row == self.grid_size-1 or col == self.grid_size-1:
+                    branch_idx = current_depth - 1  # Correct output branch indexing
+                    outputs.append(self.output_branches[branch_idx](features[row][col]))
+        
+        # Return main output + 5 auxiliary outputs
+        return outputs[-1], outputs[:-1]
