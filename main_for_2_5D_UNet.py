@@ -26,7 +26,7 @@ def dice_score_2d(pred, target):
     # return torch.mean(torch.tensor(scores))
 
 # Training setup
-volume_indices = list(range(2))  # Test with small subset
+volume_indices = list(range(131))  
 train_volumes, test_volumes = train_test_split(volume_indices, test_size=0.2, random_state=42)
 
 train_dataset = MedicalVolumeDataset2_5D("data/LITS17", train_volumes, num_slices=3)

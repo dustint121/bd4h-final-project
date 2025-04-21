@@ -9,7 +9,7 @@ from classes.VolumeDataset_3D import MedicalVolumeDataset_3D
 from utils_3D_models import hybrid_loss, dice_score_3d, dice_score_3d_perclass
 
 # Data preparation
-volume_indices = list(range(2))  # Replace with full range for real training
+volume_indices = list(range(131))  # Replace with full range for real training
 train_volumes, test_volumes = train_test_split(volume_indices, test_size=0.2, random_state=42)
 train_dataset = MedicalVolumeDataset_3D("data/LITS17", train_volumes)
 test_dataset = MedicalVolumeDataset_3D("data/LITS17", test_volumes)

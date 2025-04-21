@@ -9,9 +9,9 @@ from utils_3D_models import hybrid_loss, dice_score_3d
 
 
 
-# volume_indices = list(range(131))  # All LITS17 volumes
-volume_indices = list(range(2)) #test small subset
-train_volumes, test_volumes = train_test_split(volume_indices, test_size=0.2, random_state=42)
+volume_indices = list(range(131))  # All LITS17 volumes
+# volume_indices = list(range(5)) #test small subset
+train_volumes, test_volumes = train_test_split(volume_indices, test_size=0.5, random_state=42)
 # print(len(train_volumes), len(test_volumes))
 
 

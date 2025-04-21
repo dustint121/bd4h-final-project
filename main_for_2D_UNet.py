@@ -50,8 +50,8 @@ def hybrid_loss(pred, target):
 
 
 
-# volume_indices = list(range(131))  # All LITS17 volumes
-volume_indices = list(range(2)) #test small subset
+volume_indices = list(range(131))  # All LITS17 volumes
+# volume_indices = list(range(2)) #test small subset
 train_volumes, test_volumes = train_test_split(volume_indices, test_size=0.2, random_state=42)
 print(len(train_volumes), len(test_volumes))
 
