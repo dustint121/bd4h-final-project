@@ -50,6 +50,12 @@ class MeshBlock(nn.Module):
             # Paper's fusion: abs(subtraction)
             merged = torch.abs(out3d - out2d)
             return self.fmu(torch.cat([out3d, merged], dim=1))
+        
+        elif self.module_type == '2d':
+            b, c, d, h, w = x.shape
+            x2d = x.permute(0, 2, 1, 3, 4).reshape(b*d, c, h, w)
+            out2d = self.conv2d(x2d)
+            return out2d.reshape(b, d, -1, h, w).permute(0, 2, 1, 3, 4)       
             
         elif self.module_type == '3d':
             return self.conv3d(x)
@@ -67,9 +73,8 @@ class FMU(nn.Module):
         )
         
     def forward(self, x2d, x3d):
-        # Paper-compliant fix (Eq.2)
-        merged = torch.abs(x3d - x2d)  # Note x3d first
-        return self.conv(torch.cat([x3d, merged], dim=1))
+        merged = torch.abs(x3d - x2d)  # Reverse subtraction order
+        return self.conv(torch.cat([x3d, merged], dim=1))  # x3d first
 
 
 
@@ -104,19 +109,13 @@ class MNet3D(nn.Module):
             self.modules_grid.append(row_modules)
         
         # Deep supervision outputs (6 branches)
-        # self.output_branches = nn.ModuleList([
-        #     nn.Conv3d(32 + 16*(i-1), n_classes, 1) for i in self.depths + [5]
-        # ])
-        # Paper-compliant fix (depth=5 channels)
-        final_channels = 32 + 16*5 = 112
         self.output_branches = nn.ModuleList([
-            ...,
-            nn.Conv3d(112, n_classes, 1)  # Final output
-        ])
+            nn.Conv3d(32 + 16*(i-1), n_classes, 1) for i in range(1,6)
+        ] + [nn.Conv3d(112, n_classes, 1)])  # Final output
         
         # Skip connections with FMU
         self.fmus = nn.ModuleList([
-            FMU(32 + 16*(i-1)) for i in self.depths
+            FMU(32 + 16*i) for i in self.depths  # i=1 → 48, i=2 → 64 etc.
         ])
 
     def forward(self, x):

@@ -4,39 +4,6 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 import numpy as np
 
-class MedicalVolumeDataset_3D(Dataset):
-    def __init__(self, dataset_path, file_indices):
-        self.volumes = []
-        self.segmentations = []
-        for i in file_indices:
-            data = np.load(f"{dataset_path}/{i}.npz")
-            volume = np.transpose(data["volume"], (2, 0, 1)).astype(np.float32)  # (D, H, W)
-            seg = np.transpose(data["segmentation"], (2, 0, 1))
-            # Z-score normalization using foreground voxels
-            mask = seg > 0
-            if mask.sum() > 0:
-                mean = volume[mask].mean()
-                std = volume[mask].std()
-                volume = (volume - mean) / (std + 1e-8)
-            self.volumes.append(volume[None, ...])  # Add channel dim
-            self.segmentations.append(seg)
-
-    def __len__(self):
-        return len(self.volumes)
-
-    def __getitem__(self, idx):
-        volume = torch.FloatTensor(self.volumes[idx])  # (1, D, H, W)
-        seg = torch.LongTensor(self.segmentations[idx])  # (D, H, W)
-        # Pad to multiples of 8 (for UNet compatibility)
-        d, h, w = volume.shape[1:]
-        pad_d = (8 - d % 8) % 8
-        pad_h = (8 - h % 8) % 8
-        pad_w = (8 - w % 8) % 8
-        volume = F.pad(volume, (0, pad_w, 0, pad_h, 0, pad_d))
-        seg = F.pad(seg, (0, pad_w, 0, pad_h, 0, pad_d))
-        return volume, seg
-
-
 
 
 class ConvBlock3D(nn.Module):
